@@ -1,13 +1,14 @@
 module.exports = function extendJSConfig (value, source) {
   const recast = require('recast')
-  const stringifyJS = require('javascript-stringify')
+  const stringifyJS = require('./stringifyJS')
 
   let exportsIdentifier = null
 
   const ast = recast.parse(source)
 
   recast.types.visit(ast, {
-    visitAssignmentExpression ({ node }) {
+    visitAssignmentExpression (path) {
+      const { node } = path
       if (
         node.left.type === 'MemberExpression' &&
         node.left.object.name === 'module' &&
@@ -21,6 +22,7 @@ module.exports = function extendJSConfig (value, source) {
         }
         return false
       }
+      this.traverse(path)
     }
   })
 

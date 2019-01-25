@@ -1,18 +1,17 @@
 const fs = require('fs')
-const os = require('os')
-const path = require('path')
 const cloneDeep = require('lodash.clonedeep')
+const { getRcPath } = require('./util/rcPath')
+const { exit } = require('@vue/cli-shared-utils/lib/exit')
 const { error } = require('@vue/cli-shared-utils/lib/logger')
 const { createSchema, validate } = require('@vue/cli-shared-utils/lib/validate')
 
-const rcPath = exports.rcPath = (
-  process.env.VUE_CLI_CONFIG_PATH ||
-  path.join(os.homedir(), '.vuerc')
-)
+const rcPath = exports.rcPath = getRcPath('.vuerc')
 
 const presetSchema = createSchema(joi => joi.object().keys({
+  bare: joi.boolean(),
   useConfigFiles: joi.boolean(),
   router: joi.boolean(),
+  routerHistoryMode: joi.boolean(),
   vuex: joi.boolean(),
   cssPreprocessor: joi.string().only(['sass', 'less', 'stylus']),
   plugins: joi.object().required(),
@@ -20,6 +19,8 @@ const presetSchema = createSchema(joi => joi.object().keys({
 }))
 
 const schema = createSchema(joi => joi.object().keys({
+  latestVersion: joi.string().regex(/^\d+\.\d+\.\d+$/),
+  lastChecked: joi.date().timestamp(),
   packageManager: joi.string().only(['yarn', 'npm']),
   useTaobaoRegistry: joi.boolean(),
   presets: joi.object().pattern(/^/, presetSchema)
@@ -44,6 +45,9 @@ exports.defaultPreset = {
 }
 
 exports.defaults = {
+  lastChecked: undefined,
+  latestVersion: undefined,
+
   packageManager: undefined,
   useTaobaoRegistry: undefined,
   presets: {
@@ -67,7 +71,7 @@ exports.loadOptions = () => {
         `Please fix/delete it and re-run vue-cli in manual mode.\n` +
         `(${e.message})`,
       )
-      process.exit(1)
+      exit(1)
     }
     validate(cachedOptions, schema, () => {
       error(

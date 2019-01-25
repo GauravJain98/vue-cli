@@ -4,7 +4,7 @@
 
 ## Configuration
 
-Uses Babel 7 + `babel-loader` + [@vue/babel-preset-app](https://github.com/vuejs/vue-cli/tree/dev/packages/%40vue/babel-preset-app) by default, but can be configured via `.babelrc` to use any other Babel presets or plugins.
+Uses Babel 7 + `babel-loader` + [@vue/babel-preset-app](https://github.com/vuejs/vue-cli/tree/dev/packages/%40vue/babel-preset-app) by default, but can be configured via `babel.config.js` to use any other Babel presets or plugins.
 
 By default, `babel-loader` excludes files inside `node_modules` dependencies. If you wish to explicitly transpile a dependency module, you will need to add it to the `transpileDependencies` option in `vue.config.js`:
 
@@ -20,7 +20,7 @@ module.exports = {
 
 ## Caching
 
-[cache-loader](https://github.com/webpack-contrib/cache-loader) is enabled by default and cache is stored in `<projectRoot>/node_modules/.cache/cache-loader`.
+[cache-loader](https://github.com/webpack-contrib/cache-loader) is enabled by default and cache is stored in `<projectRoot>/node_modules/.cache/babel-loader`.
 
 ## Parallelization
 
@@ -29,8 +29,7 @@ module.exports = {
 ## Installing in an Already Created Project
 
 ``` sh
-npm install -D @vue/cli-plugin-babel
-vue invoke babel
+vue add @vue/babel
 ```
 
 ## Injected webpack-chain Rules
@@ -38,4 +37,3 @@ vue invoke babel
 - `config.rule('js')`
 - `config.rule('js').use('babel-loader')`
 - `config.rule('js').use('cache-loader')`
-- `config.rule('js').use('thread-loader')`

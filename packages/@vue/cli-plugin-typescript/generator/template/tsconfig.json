@@ -4,19 +4,21 @@
     "module": "esnext",
     "strict": true,
     "jsx": "preserve",
+    "importHelpers": true,
     "moduleResolution": "node",
     <%_ if (options.classComponent) { _%>
     "experimentalDecorators": true,
-    "emitDecoratorMetadata": true,
     <%_ } _%>
+    "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "sourceMap": true,
     "baseUrl": ".",
     "types": [
-      "node"<%_ if (hasMocha) { _%>,
+      "webpack-env"<% if (hasMocha || hasJest) { %>,<% } %>
+      <%_ if (hasMocha) { _%>
       "mocha",
       "chai"
-      <%_ } else if (hasJest) { _%>,
+      <%_ } else if (hasJest) { _%>
       "jest"
       <%_ } _%>
     ],
@@ -24,7 +26,13 @@
       "@/*": [
         "src/*"
       ]
-    }
+    },
+    "lib": [
+      "esnext",
+      "dom",
+      "dom.iterable",
+      "scripthost"
+    ]
   },
   "include": [
     "src/**/*.ts",

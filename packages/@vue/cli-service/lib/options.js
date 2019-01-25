@@ -1,23 +1,40 @@
 const { createSchema, validate } = require('@vue/cli-shared-utils')
 
 const schema = createSchema(joi => joi.object({
-  baseUrl: joi.string(),
+  baseUrl: joi.string().allow(''),
+  publicPath: joi.string().allow(''),
   outputDir: joi.string(),
-  compiler: joi.boolean(),
+  assetsDir: joi.string().allow(''),
+  indexPath: joi.string(),
+  filenameHashing: joi.boolean(),
+  runtimeCompiler: joi.boolean(),
   transpileDependencies: joi.array(),
   productionSourceMap: joi.boolean(),
   parallel: joi.boolean(),
   devServer: joi.object(),
+  pages: joi.object().pattern(
+    /\w+/,
+    joi.alternatives().try([
+      joi.string(),
+      joi.object().keys({
+        entry: joi.string().required()
+      }).unknown(true)
+    ])
+  ),
+  crossorigin: joi.string().valid(['', 'anonymous', 'use-credentials']),
+  integrity: joi.boolean(),
 
   // css
   css: joi.object({
-    localIdentName: joi.string(),
+    modules: joi.boolean(),
     extract: joi.alternatives().try(joi.boolean(), joi.object()),
     sourceMap: joi.boolean(),
     loaderOptions: joi.object({
+      css: joi.object(),
       sass: joi.object(),
       less: joi.object(),
-      stylus: joi.object()
+      stylus: joi.object(),
+      postcss: joi.object()
     })
   }),
 
@@ -40,28 +57,61 @@ exports.validate = (options, cb) => {
   validate(options, schema, cb)
 }
 
+// #2110
+// https://github.com/nodejs/node/issues/19022
+// in some cases cpus() returns undefined, and may simply throw in the future
+function hasMultipleCores () {
+  try {
+    return require('os').cpus().length > 1
+  } catch (e) {
+    return false
+  }
+}
+
 exports.defaults = () => ({
   // project deployment base
+  publicPath: '/',
+  // for compatibility concern. TODO: remove in v4.
   baseUrl: '/',
 
   // where to output built files
   outputDir: 'dist',
 
+  // where to put static assets (js/css/img/font/...)
+  assetsDir: '',
+
+  // filename for index.html (relative to outputDir)
+  indexPath: 'index.html',
+
+  // whether filename will contain hash part
+  filenameHashing: true,
+
   // boolean, use full build?
-  compiler: false,
+  runtimeCompiler: false,
 
   // deps to transpile
   transpileDependencies: [/* string or regex */],
 
   // sourceMap for production build?
-  productionSourceMap: true,
+  productionSourceMap: !process.env.VUE_CLI_TEST,
 
   // use thread-loader for babel & TS in production build
   // enabled by default if the machine has more than 1 cores
-  parallel: require('os').cpus().length > 1,
+  parallel: hasMultipleCores(),
+
+  // multi-page config
+  pages: undefined,
+
+  // <script type="module" crossorigin="use-credentials">
+  // #1656, #1867, #2025
+  crossorigin: undefined,
+
+  // subresource integrity
+  integrity: false,
 
   css: {
     // extract: true,
+    // modules: false,
     // localIdentName: '[name]_[local]_[hash:base64:5]',
     // sourceMap: false,
     // loaderOptions: {}

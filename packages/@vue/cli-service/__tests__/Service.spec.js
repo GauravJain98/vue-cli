@@ -6,39 +6,65 @@ const fs = require('fs')
 const path = require('path')
 const Service = require('../lib/Service')
 
+const { logs } = require('@vue/cli-shared-utils')
+
 const mockPkg = json => {
   fs.writeFileSync('/package.json', JSON.stringify(json, null, 2))
 }
 
-const createMockService = (plugins = [], init = true) => {
+const createMockService = (plugins = [], init = true, mode) => {
   const service = new Service('/', {
     plugins,
     useBuiltIn: false
   })
   if (init) {
-    service.init()
+    service.init(mode)
   }
   return service
 }
 
 beforeEach(() => {
   mockPkg({})
+  delete process.env.NODE_ENV
+  delete process.env.BABEL_ENV
+  delete process.env.FOO
+  delete process.env.BAR
+  delete process.env.BAZ
 })
 
 test('env loading', () => {
-  fs.writeFileSync('/.env', `FOO=1\nBAR=2`)
-  fs.writeFileSync('/.env.local', `FOO=3\nBAZ=4`)
+  process.env.FOO = 0
+  fs.writeFileSync('/.env.local', `FOO=1\nBAR=2`)
+  fs.writeFileSync('/.env', `BAR=3\nBAZ=4`)
   createMockService()
-  expect(process.env.FOO).toBe('3')
+
+  expect(process.env.FOO).toBe('0')
   expect(process.env.BAR).toBe('2')
   expect(process.env.BAZ).toBe('4')
+
+  fs.unlinkSync('/.env.local')
+  fs.unlinkSync('/.env')
+})
+
+test('env loading for custom mode', () => {
+  process.env.VUE_CLI_TEST_TESTING_ENV = true
+  fs.writeFileSync('/.env', 'FOO=1')
+  fs.writeFileSync('/.env.staging', 'FOO=2\nNODE_ENV=production')
+  createMockService([], true, 'staging')
+
+  expect(process.env.FOO).toBe('2')
+  expect(process.env.NODE_ENV).toBe('production')
+
+  process.env.VUE_CLI_TEST_TESTING_ENV = false
+  fs.unlinkSync('/.env')
+  fs.unlinkSync('/.env.staging')
 })
 
 test('loading plugins from package.json', () => {
   mockPkg({
     devDependencies: {
       'bar': '^1.0.0',
-      '@vue/cli-plugin-babel': '^3.0.0-beta.10',
+      '@vue/cli-plugin-babel': '^3.3.0',
       'vue-cli-plugin-foo': '^1.0.0'
     }
   })
@@ -58,16 +84,59 @@ test('load project options from package.json', () => {
   expect(service.projectOptions.lintOnSave).toBe(true)
 })
 
-test('handle option baseUrl and outputDir correctly', () => {
+test('deprecate baseUrl', () => {
   mockPkg({
     vue: {
-      baseUrl: 'https://foo.com/bar',
+      baseUrl: './foo/bar'
+    }
+  })
+  createMockService()
+  expect(logs.warn.some(([msg]) => msg.match('is deprecated now, please use "publicPath" instead.')))
+})
+
+test('discard baseUrl if publicPath also exists', () => {
+  mockPkg({
+    vue: {
+      baseUrl: '/foo/barbase/',
+      publicPath: '/foo/barpublic/'
+    }
+  })
+
+  const service = createMockService()
+  expect(logs.warn.some(([msg]) => msg.match('"baseUrl" will be ignored in favor of "publicPath"')))
+  expect(service.projectOptions.publicPath).toBe('/foo/barpublic/')
+})
+
+test('handle option publicPath and outputDir correctly', () => {
+  mockPkg({
+    vue: {
+      publicPath: 'https://foo.com/bar',
       outputDir: '/public/'
     }
   })
   const service = createMockService()
-  expect(service.projectOptions.baseUrl).toBe('https://foo.com/bar/')
-  expect(service.projectOptions.outputDir).toBe('public')
+  expect(service.projectOptions.publicPath).toBe('https://foo.com/bar/')
+  expect(service.projectOptions.outputDir).toBe('/public')
+})
+
+test('normalize publicPath when relative', () => {
+  mockPkg({
+    vue: {
+      publicPath: './foo/bar'
+    }
+  })
+  const service = createMockService()
+  expect(service.projectOptions.publicPath).toBe('foo/bar/')
+})
+
+test('keep publicPath when empty', () => {
+  mockPkg({
+    vue: {
+      publicPath: ''
+    }
+  })
+  const service = createMockService()
+  expect(service.projectOptions.publicPath).toBe('')
 })
 
 test('load project options from vue.config.js', () => {
@@ -122,6 +191,9 @@ test('api: defaultModes', () => {
   }
 
   createMockService([plugin1], false /* init */).run('foo')
+
+  delete process.env.NODE_ENV
+  delete process.env.BABEL_ENV
 
   const plugin2 = {
     id: 'test-defaultModes',
@@ -184,6 +256,28 @@ test('api: configureWebpack returning object', () => {
 
   const config = service.resolveWebpackConfig()
   expect(config.output.path).toBe('test-dist-3')
+})
+
+test('api: configureWebpack preserve ruleNames', () => {
+  const service = createMockService([
+    {
+      id: 'babel',
+      apply: require('@vue/cli-plugin-babel')
+    },
+    {
+      id: 'test',
+      apply: api => {
+        api.configureWebpack({
+          module: {
+            rules: []
+          }
+        })
+      }
+    }
+  ])
+
+  const config = service.resolveWebpackConfig()
+  expect(config.module.rules[0].__ruleNames).toEqual(['js'])
 })
 
 test('api: configureDevServer', () => {

@@ -2,16 +2,22 @@ module.exports = (api, {
   classComponent,
   tsLint,
   lintOn = []
-}) => {
+}, _, invoking) => {
   if (typeof lintOn === 'string') {
     lintOn = lintOn.split(',')
   }
+
+  api.extendPackage({
+    devDependencies: {
+      typescript: api.hasPlugin('eslint') ? '~3.1.1' : '^3.0.0'
+    }
+  })
 
   if (classComponent) {
     api.extendPackage({
       dependencies: {
         'vue-class-component': '^6.0.0',
-        'vue-property-decorator': '^6.0.0'
+        'vue-property-decorator': '^7.0.0'
       }
     })
   }
@@ -34,7 +40,7 @@ module.exports = (api, {
     if (lintOn.includes('commit')) {
       api.extendPackage({
         devDependencies: {
-          'lint-staged': '^6.0.0'
+          'lint-staged': '^8.1.0'
         },
         gitHooks: {
           'pre-commit': 'lint-staged'
@@ -52,51 +58,29 @@ module.exports = (api, {
     })
   }
 
-  // inject necessary typings for other plugins
+  // late invoke compat
+  if (invoking) {
+    if (api.hasPlugin('unit-mocha')) {
+      // eslint-disable-next-line node/no-extraneous-require
+      require('@vue/cli-plugin-unit-mocha/generator').applyTS(api)
+    }
 
-  const hasMocha = api.hasPlugin('unit-mocha')
-  if (hasMocha) {
-    api.extendPackage({
-      devDependencies: {
-        '@types/mocha': '^2.2.46',
-        '@types/chai': '^4.1.0'
-      }
-    })
-  }
+    if (api.hasPlugin('unit-jest')) {
+      // eslint-disable-next-line node/no-extraneous-require
+      require('@vue/cli-plugin-unit-jest/generator').applyTS(api)
+    }
 
-  const hasJest = api.hasPlugin('unit-jest')
-  if (hasJest) {
-    api.extendPackage({
-      devDependencies: {
-        '@types/jest': '^22.0.1'
-      }
-    })
+    if (api.hasPlugin('eslint')) {
+      // eslint-disable-next-line node/no-extraneous-require
+      require('@vue/cli-plugin-eslint/generator').applyTS(api)
+    }
   }
 
   api.render('./template', {
     isTest: process.env.VUE_CLI_TEST || process.env.VUE_CLI_DEBUG,
-    hasMocha,
-    hasJest
+    hasMocha: api.hasPlugin('unit-mocha'),
+    hasJest: api.hasPlugin('unit-jest')
   })
 
-  // delete all js files that have a ts file of the same name
-  // and simply rename other js files to ts
-  const jsRE = /\.js$/
-  const excludeRE = /^tests\/e2e\/|(\.config|rc)\.js$/
-  const convertLintFlags = require('../lib/convertLintFlags')
-  api.postProcessFiles(files => {
-    for (const file in files) {
-      if (jsRE.test(file) && !excludeRE.test(file)) {
-        const tsFile = file.replace(jsRE, '.ts')
-        if (!files[tsFile]) {
-          let content = files[file]
-          if (tsLint) {
-            content = convertLintFlags(content)
-          }
-          files[tsFile] = content
-        }
-        delete files[file]
-      }
-    }
-  })
+  require('./convert')(api, { tsLint })
 }

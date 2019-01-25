@@ -11,6 +11,15 @@ const parseJS = file => {
   return res.exports
 }
 
+const baseESLintConfig = Object.assign({}, require('@vue/cli-plugin-eslint/eslintOptions').config({
+  hasPlugin: () => false
+}), {
+  rules: {
+    'no-console': 'off',
+    'no-debugger': 'off'
+  }
+})
+
 async function createAndInstall (name) {
   const project = await create(name, {
     plugins: {
@@ -33,10 +42,9 @@ async function assertUpdates (project) {
   })
 
   const eslintrc = parseJS(await project.read('.eslintrc.js'))
-  expect(eslintrc).toEqual({
-    root: true,
+  expect(eslintrc).toEqual(Object.assign({}, baseESLintConfig, {
     extends: ['plugin:vue/essential', '@vue/airbnb']
-  })
+  }))
 
   const lintedMain = await project.read('src/main.js')
   expect(lintedMain).toMatch(';') // should've been linted in post-generate hook
@@ -68,7 +76,7 @@ test('invoke with prompts', async () => {
   await assertUpdates(project)
 })
 
-test('invoke with existing files', async () => {
+test('invoke with ts', async () => {
   const project = await create(`invoke-existing`, {
     useConfigFiles: true,
     plugins: {
@@ -78,23 +86,26 @@ test('invoke with existing files', async () => {
   })
   // mock install
   const pkg = JSON.parse(await project.read('package.json'))
-  pkg.devDependencies['@vue/cli-plugin-eslint'] = '*'
+  pkg.devDependencies['@vue/cli-plugin-typescript'] = '*'
   await project.write('package.json', JSON.stringify(pkg, null, 2))
 
   // mock existing vue.config.js
   await project.write('vue.config.js', `module.exports = { lintOnSave: true }`)
 
   const eslintrc = parseJS(await project.read('.eslintrc.js'))
-  expect(eslintrc).toEqual({
-    root: true,
+  expect(eslintrc).toEqual(Object.assign({}, baseESLintConfig, {
     extends: ['plugin:vue/essential', 'eslint:recommended']
-  })
+  }))
 
-  await project.run(`${require.resolve('../bin/vue')} invoke eslint --config airbnb --lintOn commit`)
+  await project.run(`${require.resolve('../bin/vue')} invoke typescript --classComponent --useTsWithBabel`)
 
-  await assertUpdates(project)
-  const updatedVueConfig = await project.read('vue.config.js')
-  expect(updatedVueConfig).toMatch(`module.exports = { lintOnSave: false }`)
+  const updatedESLintrc = parseJS(await project.read('.eslintrc.js'))
+  expect(updatedESLintrc).toEqual(Object.assign({}, baseESLintConfig, {
+    extends: ['plugin:vue/essential', 'eslint:recommended', '@vue/typescript'],
+    parserOptions: {
+      parser: 'typescript-eslint-parser'
+    }
+  }))
 })
 
 test('invoke with existing files (yaml)', async () => {
@@ -102,19 +113,14 @@ test('invoke with existing files (yaml)', async () => {
     useConfigFiles: true,
     plugins: {
       '@vue/cli-plugin-babel': {},
-      '@vue/cli-plugin-eslint': { config: 'base' }
+      '@vue/cli-plugin-eslint': {}
     }
   })
-  // mock install
-  const pkg = JSON.parse(await project.read('package.json'))
-  pkg.devDependencies['@vue/cli-plugin-eslint'] = '*'
-  await project.write('package.json', JSON.stringify(pkg, null, 2))
 
   const eslintrc = parseJS(await project.read('.eslintrc.js'))
-  expect(eslintrc).toEqual({
-    root: true,
+  expect(eslintrc).toEqual(Object.assign({}, baseESLintConfig, {
     extends: ['plugin:vue/essential', 'eslint:recommended']
-  })
+  }))
 
   await project.rm(`.eslintrc.js`)
   await project.write(`.eslintrc.yml`, `
@@ -128,9 +134,9 @@ extends:
 
   const updated = await project.read('.eslintrc.yml')
   expect(updated).toMatch(`
-root: true
 extends:
   - 'plugin:vue/essential'
+  - 'eslint:recommended'
   - '@vue/airbnb'
 `.trim())
 })

@@ -6,6 +6,9 @@ module.exports = cli => {
     name: 'Linter / Formatter',
     value: 'linter',
     short: 'Linter',
+    description: 'Check and enforce code quality with ESLint or Prettier',
+    link: 'https://github.com/vuejs/vue-cli/tree/dev/packages/%40vue/cli-plugin-eslint',
+    plugins: ['eslint'],
     checked: true
   })
 
@@ -14,6 +17,7 @@ module.exports = cli => {
     when: answers => answers.features.includes('linter'),
     type: 'list',
     message: 'Pick a linter / formatter config:',
+    description: 'Checking code errors and enforcing an homogeoneous code style is recommended.',
     choices: answers => [
       ...(
         answers.features.includes('ts')
@@ -55,7 +59,8 @@ module.exports = cli => {
     choices: [
       {
         name: 'Lint on save',
-        value: 'save'
+        value: 'save',
+        checked: true
       },
       {
         name: 'Lint and fix on commit' + (hasGit() ? '' : chalk.red(' (requires Git)')),

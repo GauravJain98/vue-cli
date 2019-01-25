@@ -1,23 +1,18 @@
-// hack babel's codegen to fix source map.
-// this is a temporary patch before the actual change is released.
-// TODO remove after upgrading Babel to 7.0.0-beta.47
-require('./patchBabel')
+const path = require('path')
 
-module.exports = (api, {
-  parallel,
-  transpileDependencies
-}) => {
-  const useThreads = process.env.NODE_ENV === 'production' && parallel
-  const cacheDirectory = api.resolve('node_modules/.cache/cache-loader')
+module.exports = (api, options) => {
+  const useThreads = process.env.NODE_ENV === 'production' && options.parallel
   const cliServicePath = require('path').dirname(require.resolve('@vue/cli-service'))
 
   api.chainWebpack(webpackConfig => {
+    webpackConfig.resolveLoader.modules.prepend(path.join(__dirname, 'node_modules'))
+
     const jsRule = webpackConfig.module
       .rule('js')
         .test(/\.jsx?$/)
         .exclude
           .add(filepath => {
-            // always trasnpile js in vue files
+            // always transpile js in vue files
             if (/\.vue\.jsx?$/.test(filepath)) {
               return false
             }
@@ -26,7 +21,13 @@ module.exports = (api, {
               return true
             }
             // check if this is something the user explicitly wants to transpile
-            if (transpileDependencies.some(dep => filepath.match(dep))) {
+            if (options.transpileDependencies.some(dep => {
+              if (typeof dep === 'string') {
+                return filepath.includes(path.normalize(dep))
+              } else {
+                return filepath.match(dep)
+              }
+            })) {
               return false
             }
             // Don't transpile node_modules
@@ -35,7 +36,16 @@ module.exports = (api, {
           .end()
         .use('cache-loader')
           .loader('cache-loader')
-          .options({ cacheDirectory })
+          .options(api.genCacheConfig('babel-loader', {
+            '@babel/core': require('@babel/core/package.json').version,
+            '@vue/babel-preset-app': require('@vue/babel-preset-app/package.json').version,
+            'babel-loader': require('babel-loader/package.json').version,
+            modern: !!process.env.VUE_CLI_MODERN_BUILD,
+            browserslist: api.service.pkg.browserslist
+          }, [
+            'babel.config.js',
+            '.browserslistrc'
+          ]))
           .end()
 
     if (useThreads) {

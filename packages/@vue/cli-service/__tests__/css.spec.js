@@ -22,12 +22,15 @@ const genConfig = (pkg = {}, env) => {
   return config
 }
 
-const findRule = (config, lang, index = 2) => {
+const findRule = (config, lang, index = 3) => {
   const baseRule = config.module.rules.find(rule => {
     return rule.test.test(`.${lang}`)
   })
-  // all CSS rules have oneOf with two child rules, one for <style lang="module">
-  // and one for normal imports
+  // all CSS rules have 4 oneOf rules:
+  // 0 - <style lang="module"> in Vue files
+  // 1 - <style> in Vue files
+  // 2 - *.modules.css imports from JS
+  // 3 - *.css imports from JS
   return baseRule.oneOf[index]
 }
 
@@ -51,11 +54,11 @@ test('default loaders', () => {
   LANGS.forEach(lang => {
     const loader = lang === 'css' ? [] : LOADERS[lang]
     expect(findLoaders(config, lang)).toEqual(['vue-style', 'css', 'postcss'].concat(loader))
+    expect(findOptions(config, lang, 'postcss').plugins).toBeFalsy()
     // assert css-loader options
     expect(findOptions(config, lang, 'css')).toEqual({
-      minimize: false,
       sourceMap: false,
-      importLoaders: lang === 'css' ? 2 : 3
+      importLoaders: 2
     })
   })
   // sass indented syntax
@@ -67,28 +70,35 @@ test('production defaults', () => {
   LANGS.forEach(lang => {
     const loader = lang === 'css' ? [] : LOADERS[lang]
     expect(findLoaders(config, lang)).toEqual([extractLoaderPath, 'css', 'postcss'].concat(loader))
+    expect(findOptions(config, lang, 'postcss').plugins).toBeFalsy()
     expect(findOptions(config, lang, 'css')).toEqual({
-      minimize: true,
       sourceMap: false,
-      importLoaders: lang === 'css' ? 2 : 3
+      importLoaders: 2
     })
   })
 })
 
 test('CSS Modules rules', () => {
-  const config = genConfig()
+  const config = genConfig({
+    vue: {
+      css: {
+        modules: true
+      }
+    }
+  })
   LANGS.forEach(lang => {
     const expected = {
-      importLoaders: lang === 'css' ? 1 : 2, // no postcss-loader
+      importLoaders: 1, // no postcss-loader
       localIdentName: `[name]_[local]_[hash:base64:5]`,
-      minimize: false,
       sourceMap: false,
       modules: true
     }
-    // module-query rules
+    // vue-modules rules
     expect(findOptions(config, lang, 'css', 0)).toEqual(expected)
-    // module-ext rules
-    expect(findOptions(config, lang, 'css', 1)).toEqual(expected)
+    // normal-modules rules
+    expect(findOptions(config, lang, 'css', 2)).toEqual(expected)
+    // normal rules
+    expect(findOptions(config, lang, 'css', 3)).toEqual(expected)
   })
 })
 
@@ -101,7 +111,30 @@ test('css.extract', () => {
     }
   }, 'production')
   LANGS.forEach(lang => {
-    expect(findLoaders(config, lang)).not.toContain(extractLoaderPath)
+    const loader = lang === 'css' ? [] : LOADERS[lang]
+    // when extract is false in production, even without postcss config,
+    // an instance of postcss-loader is injected for inline minification.
+    expect(findLoaders(config, lang)).toEqual(['vue-style', 'css', 'postcss'].concat(loader))
+    expect(findOptions(config, lang, 'css').importLoaders).toBe(2)
+    expect(findOptions(config, lang, 'postcss').plugins).toBeTruthy()
+  })
+
+  const config2 = genConfig({
+    postcss: {},
+    vue: {
+      css: {
+        extract: false
+      }
+    }
+  }, 'production')
+  LANGS.forEach(lang => {
+    const loader = lang === 'css' ? [] : LOADERS[lang]
+    // if postcss config is present, two postcss-loaders will be used becasue it
+    // does not support mixing config files with loader options.
+    expect(findLoaders(config2, lang)).toEqual(['vue-style', 'css', 'postcss', 'postcss'].concat(loader))
+    expect(findOptions(config2, lang, 'css').importLoaders).toBe(3)
+    // minification loader should be injected before the user-facing postcss-loader
+    expect(findOptions(config2, lang, 'postcss').plugins).toBeTruthy()
   })
 })
 
@@ -121,17 +154,28 @@ test('css.sourceMap', () => {
   })
 })
 
-test('css.localIdentName', () => {
+test('css-loader options', () => {
   const localIdentName = '[name]__[local]--[hash:base64:5]'
   const config = genConfig({
     vue: {
       css: {
-        localIdentName: localIdentName
+        loaderOptions: {
+          css: {
+            localIdentName,
+            camelCase: 'only'
+          }
+        }
       }
     }
   })
   LANGS.forEach(lang => {
-    expect(findOptions(config, lang, 'css', 0).localIdentName).toBe(localIdentName)
+    const vueOptions = findOptions(config, lang, 'css', 0)
+    expect(vueOptions.localIdentName).toBe(localIdentName)
+    expect(vueOptions.camelCase).toBe('only')
+
+    const extOptions = findOptions(config, lang, 'css', 2)
+    expect(extOptions.localIdentName).toBe(localIdentName)
+    expect(extOptions.camelCase).toBe('only')
   })
 })
 

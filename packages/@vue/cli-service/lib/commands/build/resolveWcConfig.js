@@ -2,8 +2,6 @@ const path = require('path')
 const { resolveEntry, fileToComponentName } = require('./resolveWcEntry')
 
 module.exports = (api, { target, entry, name }) => {
-  // setting this disables app-only configs
-  process.env.VUE_CLI_TARGET = 'web-component'
   // Disable CSS extraction and turn on CSS shadow mode for vue-style-loader
   process.env.VUE_CLI_CSS_SHADOW_MODE = true
 
@@ -58,6 +56,7 @@ module.exports = (api, { target, entry, name }) => {
     // externalize Vue in case user imports it
     config
       .externals({
+        ...config.get('externals'),
         vue: 'Vue'
       })
 
@@ -111,6 +110,9 @@ module.exports = (api, { target, entry, name }) => {
     }
 
     Object.assign(rawConfig.output, {
+      // to ensure that multiple copies of async wc bundles can co-exist
+      // on the same page.
+      jsonpFunction: libName.replace(/-\w/g, c => c.charAt(1).toUpperCase()) + '_jsonp',
       filename: `${entryName}.js`,
       chunkFilename: `${libName}.[name]${minify ? `.min` : ``}.js`,
       // use dynamic publicPath so this can be deployed anywhere

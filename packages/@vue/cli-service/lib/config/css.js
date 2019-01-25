@@ -11,25 +11,42 @@ const findExisting = (context, files) => {
 
 module.exports = (api, options) => {
   api.chainWebpack(webpackConfig => {
+    const getAssetPath = require('../util/getAssetPath')
+    const shadowMode = !!process.env.VUE_CLI_CSS_SHADOW_MODE
+    const isProd = process.env.NODE_ENV === 'production'
+
     const {
-      extract = true,
+      modules = false,
+      extract = isProd,
       sourceMap = false,
-      localIdentName = '[name]_[local]_[hash:base64:5]',
       loaderOptions = {}
     } = options.css || {}
 
-    const shadowMode = !!process.env.VUE_CLI_CSS_SHADOW_MODE
-    const isProd = process.env.NODE_ENV === 'production'
-    const shouldExtract = isProd && extract !== false && !shadowMode
+    const shouldExtract = extract !== false && !shadowMode
+    const filename = getAssetPath(
+      options,
+      `css/[name]${options.filenameHashing ? '.[contenthash:8]' : ''}.css`
+    )
     const extractOptions = Object.assign({
-      filename: `css/[name].[contenthash:8].css`,
-      chunkFilename: 'css/[name].[id].[contenthash:8].css'
+      filename,
+      chunkFilename: filename
     }, extract && typeof extract === 'object' ? extract : {})
+
+    // use relative publicPath in extracted CSS based on extract location
+    const cssPublicPath = process.env.VUE_CLI_BUILD_TARGET === 'lib'
+      // in lib mode, CSS is extracted to dist root.
+      ? './'
+      : '../'.repeat(
+        extractOptions.filename
+            .replace(/^\.[\/\\]/, '')
+            .split(/[\/\\]/g)
+            .length - 1
+      )
 
     // check if the project has a valid postcss config
     // if it doesn't, don't use postcss-loader for direct style imports
     // because otherwise it would throw error when attempting to load postcss config
-    const hasPostCSSConfig = !!(api.service.pkg.postcss || findExisting(api.resolve('.'), [
+    const hasPostCSSConfig = !!(loaderOptions.postcss || api.service.pkg.postcss || findExisting(api.resolve('.'), [
       '.postcssrc',
       '.postcssrc.js',
       'postcss.config.js',
@@ -37,25 +54,48 @@ module.exports = (api, options) => {
       '.postcssrc.json'
     ]))
 
+    // if building for production but not extracting CSS, we need to minimize
+    // the embbeded inline CSS as they will not be going through the optimizing
+    // plugin.
+    const needInlineMinification = isProd && !shouldExtract
+
+    const cssnanoOptions = {
+      preset: ['default', {
+        mergeLonghand: false,
+        cssDeclarationSorter: false
+      }]
+    }
+    if (options.productionSourceMap && sourceMap) {
+      cssnanoOptions.map = { inline: false }
+    }
+
     function createCSSRule (lang, test, loader, options) {
       const baseRule = webpackConfig.module.rule(lang).test(test)
 
       // rules for <style lang="module">
-      const modulesRule = baseRule.oneOf('modules-query').resourceQuery(/module/)
-      applyLoaders(modulesRule, true)
+      const vueModulesRule = baseRule.oneOf('vue-modules').resourceQuery(/module/)
+      applyLoaders(vueModulesRule, true)
+
+      // rules for <style>
+      const vueNormalRule = baseRule.oneOf('vue').resourceQuery(/\?vue/)
+      applyLoaders(vueNormalRule, false)
 
       // rules for *.module.* files
-      const modulesExtRule = baseRule.oneOf('modules-ext').test(/\.module\.\w+$/)
-      applyLoaders(modulesExtRule, true)
+      const extModulesRule = baseRule.oneOf('normal-modules').test(/\.module\.\w+$/)
+      applyLoaders(extModulesRule, true)
 
+      // rules for normal CSS imports
       const normalRule = baseRule.oneOf('normal')
-      applyLoaders(normalRule, false)
+      applyLoaders(normalRule, modules)
 
       function applyLoaders (rule, modules) {
         if (shouldExtract) {
           rule
             .use('extract-css-loader')
             .loader(require('mini-css-extract-plugin').loader)
+            .options({
+              publicPath: cssPublicPath
+            })
         } else {
           rule
             .use('vue-style-loader')
@@ -66,31 +106,45 @@ module.exports = (api, options) => {
             })
         }
 
-        const cssLoaderOptions = {
-          minimize: isProd,
+        const cssLoaderOptions = Object.assign({
           sourceMap,
           importLoaders: (
             1 + // stylePostLoader injected by vue-loader
-            hasPostCSSConfig +
-            !!loader
+            (hasPostCSSConfig ? 1 : 0) +
+            (needInlineMinification ? 1 : 0)
           )
-        }
+        }, loaderOptions.css)
+
         if (modules) {
+          const {
+            localIdentName = '[name]_[local]_[hash:base64:5]'
+          } = loaderOptions.css || {}
           Object.assign(cssLoaderOptions, {
             modules,
             localIdentName
           })
         }
+
         rule
           .use('css-loader')
           .loader('css-loader')
           .options(cssLoaderOptions)
 
+        if (needInlineMinification) {
+          rule
+            .use('cssnano')
+            .loader('postcss-loader')
+            .options({
+              sourceMap,
+              plugins: [require('cssnano')(cssnanoOptions)]
+            })
+        }
+
         if (hasPostCSSConfig) {
           rule
             .use('postcss-loader')
             .loader('postcss-loader')
-            .options({ sourceMap })
+            .options(Object.assign({ sourceMap }, loaderOptions.postcss))
         }
 
         if (loader) {
@@ -103,6 +157,7 @@ module.exports = (api, options) => {
     }
 
     createCSSRule('css', /\.css$/)
+    createCSSRule('postcss', /\.p(ost)?css$/)
     createCSSRule('scss', /\.scss$/, 'sass-loader', loaderOptions.sass)
     createCSSRule('sass', /\.sass$/, 'sass-loader', Object.assign({
       indentedSyntax: true
@@ -117,24 +172,16 @@ module.exports = (api, options) => {
       webpackConfig
         .plugin('extract-css')
           .use(require('mini-css-extract-plugin'), [extractOptions])
-    }
 
-    if (isProd) {
-      // optimize CSS (dedupe)
-      const cssProcessorOptions = {
-        safe: true,
-        autoprefixer: { disable: true },
-        mergeLonghand: false
+      // minify extracted CSS
+      if (isProd) {
+        webpackConfig
+          .plugin('optimize-css')
+            .use(require('@intervolga/optimize-cssnano-plugin'), [{
+              sourceMap: options.productionSourceMap && sourceMap,
+              cssnanoOptions
+            }])
       }
-      if (options.productionSourceMap && sourceMap) {
-        cssProcessorOptions.map = { inline: false }
-      }
-      webpackConfig
-        .plugin('optimize-css')
-          .use(require('optimize-css-assets-webpack-plugin'), [{
-            canPrint: false,
-            cssProcessorOptions
-          }])
     }
   })
 }

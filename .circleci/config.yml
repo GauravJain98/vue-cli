@@ -5,6 +5,12 @@ defaults: &defaults
   docker:
     - image: vuejs/ci
 
+workflow_filters: &filters
+  filters:
+    branches:
+      ignore:
+      - docs
+
 jobs:
   install:
     <<: *defaults
@@ -12,64 +18,85 @@ jobs:
       - checkout
       - restore_cache:
           keys:
-            - v1-vue-{{ .Branch }}-{{ checksum "yarn.lock" }}
-            - v1-vue-{{ .Branch }}-
-            - v1-vue-
-      - run: yarn
+            - v2-vue-cli-{{ .Branch }}-{{ checksum "yarn.lock" }}
+      - run: yarn --network-timeout 600000
       - save_cache:
-          key: v1-vue-{{ .Branch }}-{{ checksum "yarn.lock" }}
+          key: v2-vue-cli-{{ .Branch }}-{{ checksum "yarn.lock" }}
           paths:
             - node_modules/
-            - ~/.cache/yarn
+            - ~/.cache
       - persist_to_workspace:
-          root: ~/project
+          root: ~/
           paths:
-            - vue
+            - project/vue
+            - .cache/Cypress
 
   group-1:
     <<: *defaults
     steps:
       - attach_workspace:
-          at: ~/project
+          at: ~/
       - run: yarn test -p cli,cli-service,cli-shared-utils
 
   group-2:
     <<: *defaults
     steps:
       - attach_workspace:
-          at: ~/project
+          at: ~/
       - run: yarn test 'ts(?:\w(?!E2e))+\.spec\.js$'
 
   group-3:
     <<: *defaults
     steps:
       - attach_workspace:
-          at: ~/project
+          at: ~/
       - run: yarn lint
+      - run: yarn check-links
       - run: yarn test -p cli-service-global,eslint,pwa,babel,babel-preset-app
 
   group-4:
     <<: *defaults
     steps:
       - attach_workspace:
-          at: ~/project
-      - run: yarn test -p unit-mocha,unit-jest,e2e-nightwatch,e2e-cypress
+          at: ~/
+      - run: yarn test -p unit-mocha,unit-jest,e2e-cypress
+      # e2e-nightwatch was left out due to some unknown issues with selenium and the CI image
       - run: yarn test tsPluginE2e
+
+  cli-ui:
+    <<: *defaults
+    steps:
+      - attach_workspace:
+          at: ~/
+      - run: cd packages/@vue/cli-ui && yarn test
+      - store_artifacts:
+          path: packages/@vue/cli-ui/tests/e2e/videos
+      - store_artifacts:
+          path: packages/@vue/cli-ui/tests/e2e/screenshots
 
 workflows:
   version: 2
   test:
     jobs:
-      - install
+      - install:
+          <<: *filters
       - group-1:
+          <<: *filters
           requires:
             - install
       - group-2:
+          <<: *filters
           requires:
             - install
       - group-3:
+          <<: *filters
           requires:
             - install
       - group-4:
+          <<: *filters
+          requires:
+            - install
+      - cli-ui:
+          <<: *filters
           requires:
             - install

@@ -1,22 +1,18 @@
 module.exports = (api, options) => {
-  api.render('./template')
+  api.render('./template', {
+    doesCompile: api.hasPlugin('babel') || api.hasPlugin('typescript')
+  })
 
   api.extendPackage({
     scripts: {
-      'serve': 'vue-cli-service serve' + (
-        // only auto open browser on MacOS where applescript
-        // can avoid dupilcate window opens
-        process.platform === 'darwin'
-          ? ' --open'
-          : ''
-      ),
+      'serve': 'vue-cli-service serve',
       'build': 'vue-cli-service build'
     },
     dependencies: {
-      'vue': '^2.5.16'
+      'vue': '^2.5.21'
     },
     devDependencies: {
-      'vue-template-compiler': '^2.5.16'
+      'vue-template-compiler': '^2.5.21'
     },
     'postcss': {
       'plugins': {
@@ -31,19 +27,11 @@ module.exports = (api, options) => {
   })
 
   if (options.router) {
-    api.extendPackage({
-      dependencies: {
-        'vue-router': '^3.0.1'
-      }
-    })
+    require('./router')(api, options)
   }
 
   if (options.vuex) {
-    api.extendPackage({
-      dependencies: {
-        vuex: '^3.0.1'
-      }
-    })
+    require('./vuex')(api, options)
   }
 
   if (options.cssPreprocessor) {

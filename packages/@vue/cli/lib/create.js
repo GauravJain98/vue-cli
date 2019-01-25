@@ -3,8 +3,9 @@ const path = require('path')
 const chalk = require('chalk')
 const inquirer = require('inquirer')
 const Creator = require('./Creator')
-const clearConsole = require('./util/clearConsole')
-const { error, stopSpinner } = require('@vue/cli-shared-utils')
+const { clearConsole } = require('./util/clearConsole')
+const { getPromptModules } = require('./util/createTools')
+const { error, stopSpinner, exit } = require('@vue/cli-shared-utils')
 const validateProjectName = require('validate-npm-package-name')
 
 async function create (projectName, options) {
@@ -12,17 +13,21 @@ async function create (projectName, options) {
     process.env.HTTP_PROXY = options.proxy
   }
 
+  const cwd = options.cwd || process.cwd()
   const inCurrent = projectName === '.'
-  const name = inCurrent ? path.relative('../', process.cwd()) : projectName
-  const targetDir = path.resolve(projectName || '.')
+  const name = inCurrent ? path.relative('../', cwd) : projectName
+  const targetDir = path.resolve(cwd, projectName || '.')
 
   const result = validateProjectName(name)
   if (!result.validForNewPackages) {
-    console.error(chalk.red(`Invalid project name: "${projectName}"`))
+    console.error(chalk.red(`Invalid project name: "${name}"`))
     result.errors && result.errors.forEach(err => {
-      console.error(chalk.red(err))
+      console.error(chalk.red.dim('Error: ' + err))
     })
-    process.exit(1)
+    result.warnings && result.warnings.forEach(warn => {
+      console.error(chalk.red.dim('Warning: ' + warn))
+    })
+    exit(1)
   }
 
   if (fs.existsSync(targetDir)) {
@@ -57,32 +62,23 @@ async function create (projectName, options) {
         if (!action) {
           return
         } else if (action === 'overwrite') {
+          console.log(`\nRemoving ${chalk.cyan(targetDir)}...`)
           await fs.remove(targetDir)
         }
       }
     }
   }
 
-  const promptModules = [
-    'babel',
-    'typescript',
-    'pwa',
-    'router',
-    'vuex',
-    'cssPreprocessors',
-    'linter',
-    'unit',
-    'e2e'
-  ].map(file => require(`./promptModules/${file}`))
-
-  const creator = new Creator(name, targetDir, promptModules)
+  const creator = new Creator(name, targetDir, getPromptModules())
   await creator.create(options)
 }
 
 module.exports = (...args) => {
-  create(...args).catch(err => {
+  return create(...args).catch(err => {
     stopSpinner(false) // do not persist
     error(err)
-    process.exit(1)
+    if (!process.env.VUE_CLI_TEST) {
+      process.exit(1)
+    }
   })
 }

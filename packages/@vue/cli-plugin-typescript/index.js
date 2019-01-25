@@ -1,15 +1,17 @@
-module.exports = (api, {
-  parallel,
-  lintOnSave
-}) => {
+const path = require('path')
+
+module.exports = (api, options) => {
   const fs = require('fs')
-  const useThreads = process.env.NODE_ENV === 'production' && parallel
-  const cacheDirectory = api.resolve('node_modules/.cache/cache-loader')
+  const useThreads = process.env.NODE_ENV === 'production' && options.parallel
 
   api.chainWebpack(config => {
-    config.entry('app')
-      .clear()
-      .add('./src/main.ts')
+    config.resolveLoader.modules.prepend(path.join(__dirname, 'node_modules'))
+
+    if (!options.pages) {
+      config.entry('app')
+        .clear()
+        .add('./src/main.ts')
+    }
 
     config.resolve
       .extensions
@@ -26,8 +28,13 @@ module.exports = (api, {
 
     addLoader({
       loader: 'cache-loader',
-      options: { cacheDirectory }
+      options: api.genCacheConfig('ts-loader', {
+        'ts-loader': require('ts-loader/package.json').version,
+        'typescript': require('typescript/package.json').version,
+        modern: !!process.env.VUE_CLI_MODERN_BUILD
+      }, 'tsconfig.json')
     })
+
     if (useThreads) {
       addLoader({
         loader: 'thread-loader'
@@ -43,32 +50,37 @@ module.exports = (api, {
       loader: 'ts-loader',
       options: {
         transpileOnly: true,
-        appendTsSuffixTo: [/\.vue$/],
+        appendTsSuffixTo: ['\\.vue$'],
         // https://github.com/TypeStrong/ts-loader#happypackmode-boolean-defaultfalse
         happyPackMode: useThreads
       }
     })
     // make sure to append TSX suffix
     tsxRule.use('ts-loader').loader('ts-loader').tap(options => {
+      options = Object.assign({}, options)
       delete options.appendTsSuffixTo
-      options.appendTsxSuffixTo = [/\.vue$/]
+      options.appendTsxSuffixTo = ['\\.vue$']
       return options
     })
 
-    config
-      .plugin('fork-ts-checker')
-        .use(require('fork-ts-checker-webpack-plugin'), [{
-          vue: true,
-          tslint: lintOnSave !== false && fs.existsSync(api.resolve('tslint.json')),
-          formatter: 'codeframe',
-          // https://github.com/TypeStrong/ts-loader#happypackmode-boolean-defaultfalse
-          checkSyntacticErrors: useThreads
-        }])
+    if (!process.env.VUE_CLI_TEST) {
+      // this plugin does not play well with jest + cypress setup (tsPluginE2e.spec.js) somehow
+      // so temporarily disabled for vue-cli tests
+      config
+        .plugin('fork-ts-checker')
+          .use(require('fork-ts-checker-webpack-plugin'), [{
+            vue: true,
+            tslint: options.lintOnSave !== false && fs.existsSync(api.resolve('tslint.json')),
+            formatter: 'codeframe',
+            // https://github.com/TypeStrong/ts-loader#happypackmode-boolean-defaultfalse
+            checkSyntacticErrors: useThreads
+          }])
+    }
   })
 
   if (!api.hasPlugin('eslint')) {
     api.registerCommand('lint', {
-      descriptions: 'lint source files with TSLint',
+      description: 'lint source files with TSLint',
       usage: 'vue-cli-service lint [options] [...files]',
       options: {
         '--format [formatter]': 'specify formatter (default: codeFrame)',

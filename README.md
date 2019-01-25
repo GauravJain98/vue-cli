@@ -1,22 +1,10 @@
-# vue-cli [![Build Status](https://circleci.com/gh/vuejs/vue-cli/tree/dev.svg?style=shield)](https://circleci.com/gh/vuejs/vue-cli/tree/dev) [![Windows Build status](https://ci.appveyor.com/api/projects/status/487fqt71e4kf46iv/branch/dev?svg=true)](https://ci.appveyor.com/project/yyx990803/vue-cli-6b0a6/branch/dev)
+# vue-cli [![Build Status](https://circleci.com/gh/vuejs/vue-cli/tree/dev.svg?style=shield)](https://circleci.com/gh/vuejs/vue-cli/tree/dev) [![Windows Build status](https://ci.appveyor.com/api/projects/status/rkpafdpdwie9lqx0/branch/dev?svg=true)](https://ci.appveyor.com/project/yyx990803/vue-cli/branch/dev)
 
-> This is the branch for `@vue/cli` 3.0.
+> Vue CLI is the Standard Tooling for Vue.js Development.
 
-## Status: beta
+## Documentation
 
-Most of the planned features are in place but there may still be bugs. API may still change until we reach RC phase. Do not use in production yet unless you are adventurous.
-
-## Quickstart
-
-``` sh
-npm install -g @vue/cli
-# or
-yarn global add @vue/cli
-
-vue create my-project
-```
-
-For a detailed guide with recipes for common tasks, detailed usage for each plugin, please see the [full documentation](https://github.com/vuejs/vue-cli/blob/dev/docs/README.md).
+Docs are available at https://cli.vuejs.org/ - we are still working on refining it and contributions are welcome!
 
 ## Contributing
 
@@ -24,4 +12,4 @@ Please see [contributing guide](https://github.com/vuejs/vue-cli/blob/dev/.githu
 
 ## License
 
-MIT
+[MIT](https://github.com/vuejs/vue-cli/blob/dev/LICENSE)

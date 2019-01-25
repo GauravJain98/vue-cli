@@ -2,14 +2,20 @@ module.exports = cli => {
   cli.injectFeature({
     name: 'TypeScript',
     value: 'ts',
-    short: 'TS'
+    short: 'TS',
+    description: 'Add support for the TypeScript language',
+    link: 'https://github.com/vuejs/vue-cli/tree/dev/packages/%40vue/cli-plugin-typescript',
+    plugins: ['typescript']
   })
 
   cli.injectPrompt({
     name: 'tsClassComponent',
     when: answers => answers.features.includes('ts'),
     type: 'confirm',
-    message: 'Use class-style component syntax?'
+    message: 'Use class-style component syntax?',
+    description: 'Use the @Component decorator on classes.',
+    link: 'https://vuejs.org/v2/guide/typescript.html#Class-Style-Vue-Components',
+    default: true
   })
 
   cli.injectPrompt({
@@ -17,6 +23,7 @@ module.exports = cli => {
     when: answers => answers.features.includes('ts'),
     type: 'confirm',
     message: 'Use Babel alongside TypeScript for auto-detected polyfills?',
+    description: 'It will output ES2015 and delegate the rest to Babel for auto polyfill based on browser targets.',
     default: answers => answers.features.includes('babel')
   })
 

@@ -1,18 +1,18 @@
 const fs = require('fs')
 const ejs = require('ejs')
 const path = require('path')
-const globby = require('globby')
 const merge = require('deepmerge')
 const resolve = require('resolve')
 const isBinary = require('isbinaryfile')
-const yaml = require('yaml-front-matter')
 const mergeDeps = require('./util/mergeDeps')
-const stringifyJS = require('javascript-stringify')
+const stringifyJS = require('./util/stringifyJS')
+const ConfigTransform = require('./ConfigTransform')
 const { getPluginLink, toShortPluginId } = require('@vue/cli-shared-utils')
 
 const isString = val => typeof val === 'string'
 const isFunction = val => typeof val === 'function'
 const isObject = val => val && typeof val === 'object'
+const mergeArrayWithDedupe = (a, b) => Array.from(new Set([...a, ...b]))
 
 class GeneratorAPI {
   /**
@@ -33,6 +33,8 @@ class GeneratorAPI {
         name: toShortPluginId(id),
         link: getPluginLink(id)
       }))
+
+    this._entryFile = undefined
   }
 
   /**
@@ -80,6 +82,39 @@ class GeneratorAPI {
   }
 
   /**
+   * Configure how config files are extracted.
+   *
+   * @param {string} key - Config key in package.json
+   * @param {object} options - Options
+   * @param {object} options.file - File descriptor
+   * Used to search for existing file.
+   * Each key is a file type (possible values: ['js', 'json', 'yaml', 'lines']).
+   * The value is a list of filenames.
+   * Example:
+   * {
+   *   js: ['.eslintrc.js'],
+   *   json: ['.eslintrc.json', '.eslintrc']
+   * }
+   * By default, the first filename will be used to create the config file.
+   */
+  addConfigTransform (key, options) {
+    const hasReserved = Object.keys(this.generator.reservedConfigTransforms).includes(key)
+    if (
+      hasReserved ||
+      !options ||
+      !options.file
+    ) {
+      if (hasReserved) {
+        const { warn } = require('@vue/cli-shared-utils')
+        warn(`Reserved config transform '${key}'`)
+      }
+      return
+    }
+
+    this.generator.configTransforms[key] = new ConfigTransform(options)
+  }
+
+  /**
    * Extend the package.json of the project.
    * Nested fields are deep-merged unless `{ merge: false }` is passed.
    * Also resolves dependency conflicts between plugins.
@@ -105,9 +140,9 @@ class GeneratorAPI {
       } else if (!(key in pkg)) {
         pkg[key] = value
       } else if (Array.isArray(value) && Array.isArray(existing)) {
-        pkg[key] = existing.concat(value)
+        pkg[key] = mergeArrayWithDedupe(existing, value)
       } else if (isObject(value) && isObject(existing)) {
-        pkg[key] = merge(existing, value)
+        pkg[key] = merge(existing, value, { arrayMerge: mergeArrayWithDedupe })
       } else {
         pkg[key] = value
       }
@@ -131,15 +166,20 @@ class GeneratorAPI {
       source = path.resolve(baseDir, source)
       this._injectFileMiddleware(async (files) => {
         const data = this._resolveData(additionalData)
+        const globby = require('globby')
         const _files = await globby(['**/*'], { cwd: source })
         for (const rawPath of _files) {
-          let filename = path.basename(rawPath)
-          // dotfiles are ignored when published to npm, therefore in templates
-          // we need to use underscore instead (e.g. "_gitignore")
-          if (filename.charAt(0) === '_') {
-            filename = `.${filename.slice(1)}`
-          }
-          const targetPath = path.join(path.dirname(rawPath), filename)
+          const targetPath = rawPath.split('/').map(filename => {
+            // dotfiles are ignored when published to npm, therefore in templates
+            // we need to use underscore instead (e.g. "_gitignore")
+            if (filename.charAt(0) === '_' && filename.charAt(1) !== '_') {
+              return `.${filename.slice(1)}`
+            }
+            if (filename.charAt(0) === '_' && filename.charAt(1) === '_') {
+              return `${filename.slice(1)}`
+            }
+            return filename
+          }).join('/')
           const sourcePath = path.resolve(source, rawPath)
           const content = renderFile(sourcePath, data, ejsOptions)
           // only set file if it's not all whitespace, or is a Buffer (binary files)
@@ -199,6 +239,51 @@ class GeneratorAPI {
   genJSConfig (value) {
     return `module.exports = ${stringifyJS(value, null, 2)}`
   }
+
+  /**
+   * Add import statements to a file.
+   */
+  injectImports (file, imports) {
+    const _imports = (
+      this.generator.imports[file] ||
+      (this.generator.imports[file] = new Set())
+    )
+    ;(Array.isArray(imports) ? imports : [imports]).forEach(imp => {
+      _imports.add(imp)
+    })
+  }
+
+  /**
+   * Add options to the root Vue instance (detected by `new Vue`).
+   */
+  injectRootOptions (file, options) {
+    const _options = (
+      this.generator.rootOptions[file] ||
+      (this.generator.rootOptions[file] = new Set())
+    )
+    ;(Array.isArray(options) ? options : [options]).forEach(opt => {
+      _options.add(opt)
+    })
+  }
+
+  /**
+   * Get the entry file taking into account typescript.
+   *
+   * @readonly
+   */
+  get entryFile () {
+    if (this._entryFile) return this._entryFile
+    return (this._entryFile = fs.existsSync(this.resolve('src/main.ts')) ? 'src/main.ts' : 'src/main.js')
+  }
+
+  /**
+   * Is the plugin being invoked?
+   *
+   * @readonly
+   */
+  get invoking () {
+    return this.generator.invoking
+  }
 }
 
 function extractCallDir () {
@@ -227,6 +312,7 @@ function renderFile (name, data, ejsOptions) {
   //   - !!js/regexp /foo/
   //   - !!js/regexp /bar/
   // ---
+  const yaml = require('yaml-front-matter')
   const parsed = yaml.loadFront(template)
   const content = parsed.__content
   let finalTemplate = content.trim() + `\n`
@@ -249,6 +335,13 @@ function renderFile (name, data, ejsOptions) {
       } else {
         finalTemplate = finalTemplate.replace(parsed.replace, content.trim())
       }
+    }
+    if (parsed.when) {
+      finalTemplate = (
+        `<%_ if (${parsed.when}) { _%>` +
+          finalTemplate +
+        `<%_ } _%>`
+      )
     }
   }
 

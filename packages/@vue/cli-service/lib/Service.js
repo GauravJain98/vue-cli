@@ -8,7 +8,7 @@ const Config = require('webpack-chain')
 const PluginAPI = require('./PluginAPI')
 const loadEnv = require('./util/loadEnv')
 const defaultsDeep = require('lodash.defaultsdeep')
-const { warn, error, isPlugin } = require('@vue/cli-shared-utils')
+const { warn, error, isPlugin, loadModule } = require('@vue/cli-shared-utils')
 
 const { defaults, validate } = require('./options')
 
@@ -22,6 +22,9 @@ module.exports = class Service {
     this.webpackRawConfigFns = []
     this.devServerConfigFns = []
     this.commands = {}
+    // Folder containing the target package.json for plugins
+    this.pkgContext = context
+    // package.json containing the plugins
     this.pkg = this.resolvePkg(pkg)
     // If there are inline plugins, they will be used instead of those
     // found in package.json.
@@ -29,18 +32,23 @@ module.exports = class Service {
     // for testing.
     this.plugins = this.resolvePlugins(plugins, useBuiltIn)
     // resolve the default mode to use for each command
-    // this is provided by plugins as module.exports.defaulModes
+    // this is provided by plugins as module.exports.defaultModes
     // so we can get the information without actually applying the plugin.
     this.modes = this.plugins.reduce((modes, { apply: { defaultModes }}) => {
       return Object.assign(modes, defaultModes)
     }, {})
   }
 
-  resolvePkg (inlinePkg) {
+  resolvePkg (inlinePkg, context = this.context) {
     if (inlinePkg) {
       return inlinePkg
-    } else if (fs.existsSync(path.join(this.context, 'package.json'))) {
-      return readPkg.sync(this.context)
+    } else if (fs.existsSync(path.join(context, 'package.json'))) {
+      const pkg = readPkg.sync({ cwd: context })
+      if (pkg.vuePlugins && pkg.vuePlugins.resolveFrom) {
+        this.pkgContext = path.resolve(context, pkg.vuePlugins.resolveFrom)
+        return this.resolvePkg(null, this.pkgContext)
+      }
+      return pkg
     } else {
       return {}
     }
@@ -53,12 +61,12 @@ module.exports = class Service {
     this.initialized = true
     this.mode = mode
 
-    // load base .env
-    this.loadEnv()
     // load mode .env
     if (mode) {
       this.loadEnv(mode)
     }
+    // load base .env
+    this.loadEnv()
 
     // load user config
     const userOptions = this.loadUserOptions()
@@ -81,15 +89,6 @@ module.exports = class Service {
   }
 
   loadEnv (mode) {
-    if (mode) {
-      // by default, NODE_ENV and BABEL_ENV are set to "development" unless mode
-      // is production or test. However this can be overwritten in .env files.
-      process.env.NODE_ENV = process.env.BABEL_ENV =
-        (mode === 'production' || mode === 'test')
-          ? mode
-          : 'development'
-    }
-
     const logger = debug('vue:env')
     const basePath = path.resolve(this.context, `.env${mode ? `.${mode}` : ``}`)
     const localPath = `${basePath}.local`
@@ -106,8 +105,29 @@ module.exports = class Service {
       }
     }
 
-    load(basePath)
     load(localPath)
+    load(basePath)
+
+    // by default, NODE_ENV and BABEL_ENV are set to "development" unless mode
+    // is production or test. However the value in .env files will take higher
+    // priority.
+    if (mode) {
+      // always set NODE_ENV during tests
+      // as that is necessary for tests to not be affected by each other
+      const shouldForceDefaultEnv = (
+        process.env.VUE_CLI_TEST &&
+        !process.env.VUE_CLI_TEST_TESTING_ENV
+      )
+      const defaultNodeEnv = (mode === 'production' || mode === 'test')
+        ? mode
+        : 'development'
+      if (shouldForceDefaultEnv || process.env.NODE_ENV == null) {
+        process.env.NODE_ENV = defaultNodeEnv
+      }
+      if (shouldForceDefaultEnv || process.env.BABEL_ENV == null) {
+        process.env.BABEL_ENV = defaultNodeEnv
+      }
+    }
   }
 
   resolvePlugins (inlinePlugins, useBuiltIn) {
@@ -115,6 +135,8 @@ module.exports = class Service {
       id: id.replace(/^.\//, 'built-in:'),
       apply: require(id)
     })
+
+    let plugins
 
     const builtInPlugins = [
       './commands/serve',
@@ -130,23 +152,53 @@ module.exports = class Service {
     ].map(idToPlugin)
 
     if (inlinePlugins) {
-      return useBuiltIn !== false
+      plugins = useBuiltIn !== false
         ? builtInPlugins.concat(inlinePlugins)
         : inlinePlugins
     } else {
-      const projectPlugins = Object.keys(this.pkg.dependencies || {})
-        .concat(Object.keys(this.pkg.devDependencies || {}))
+      const projectPlugins = Object.keys(this.pkg.devDependencies || {})
+        .concat(Object.keys(this.pkg.dependencies || {}))
         .filter(isPlugin)
-        .map(idToPlugin)
-      return builtInPlugins.concat(projectPlugins)
+        .map(id => {
+          if (
+            this.pkg.optionalDependencies &&
+            id in this.pkg.optionalDependencies
+          ) {
+            let apply = () => {}
+            try {
+              apply = require(id)
+            } catch (e) {
+              warn(`Optional dependency ${id} is not installed.`)
+            }
+
+            return { id, apply }
+          } else {
+            return idToPlugin(id)
+          }
+        })
+      plugins = builtInPlugins.concat(projectPlugins)
     }
+
+    // Local plugins
+    if (this.pkg.vuePlugins && this.pkg.vuePlugins.service) {
+      const files = this.pkg.vuePlugins.service
+      if (!Array.isArray(files)) {
+        throw new Error(`Invalid type for option 'vuePlugins.service', expected 'array' but got ${typeof files}.`)
+      }
+      plugins = plugins.concat(files.map(file => ({
+        id: `local:${file}`,
+        apply: loadModule(file, this.pkgContext)
+      })))
+    }
+
+    return plugins
   }
 
   async run (name, args = {}, rawArgv = []) {
     // resolve mode
     // prioritize inline --mode
-    // fallback to resolved default modes from plugins
-    const mode = args.mode || this.modes[name]
+    // fallback to resolved default modes from plugins or development if --watch is defined
+    const mode = args.mode || (name === 'build' && args.watch ? 'development' : this.modes[name])
 
     // load env variables, load user config, apply plugins
     this.init(mode)
@@ -157,7 +209,7 @@ module.exports = class Service {
       error(`command "${name}" does not exist.`)
       process.exit(1)
     }
-    if (!command || args.help) {
+    if (!command || args.help || args.h) {
       command = this.commands.help
     } else {
       args._.shift() // remove command itself
@@ -180,6 +232,7 @@ module.exports = class Service {
     }
     // get raw config
     let config = chainableConfig.toConfig()
+    const original = config
     // apply raw config fns
     this.webpackRawConfigFns.forEach(fn => {
       if (typeof fn === 'function') {
@@ -191,12 +244,36 @@ module.exports = class Service {
         config = merge(config, fn)
       }
     })
+
+    // #2206 If config is merged by merge-webpack, it discards the __ruleNames
+    // information injected by webpack-chain. Restore the info so that
+    // vue inspect works properly.
+    if (config !== original) {
+      cloneRuleNames(
+        config.module && config.module.rules,
+        original.module && original.module.rules
+      )
+    }
+
+    // check if the user has manually mutated output.publicPath
+    const target = process.env.VUE_CLI_BUILD_TARGET
+    if (
+      !process.env.VUE_CLI_TEST &&
+      (target && target !== 'app') &&
+      config.output.publicPath !== this.projectOptions.publicPath
+    ) {
+      throw new Error(
+        `Do not modify webpack output.publicPath directly. ` +
+        `Use the "publicPath" option in vue.config.js instead.`
+      )
+    }
+
     return config
   }
 
   loadUserOptions () {
     // vue.config.js
-    let fileConfig, pkgConfig, resolved, resovledFrom
+    let fileConfig, pkgConfig, resolved, resolvedFrom
     const configPath = (
       process.env.VUE_CLI_SERVICE_CONFIG_PATH ||
       path.resolve(this.context, 'vue.config.js')
@@ -238,23 +315,52 @@ module.exports = class Service {
         )
       }
       resolved = fileConfig
-      resovledFrom = 'vue.config.js'
+      resolvedFrom = 'vue.config.js'
     } else if (pkgConfig) {
       resolved = pkgConfig
-      resovledFrom = '"vue" field in package.json'
+      resolvedFrom = '"vue" field in package.json'
     } else {
       resolved = this.inlineOptions || {}
-      resovledFrom = 'inline options'
+      resolvedFrom = 'inline options'
     }
 
-    // normlaize some options
-    ensureSlash(resolved, 'baseUrl')
+    if (typeof resolved.baseUrl !== 'undefined') {
+      if (typeof resolved.publicPath !== 'undefined') {
+        warn(
+          `You have set both "baseUrl" and "publicPath" in ${chalk.bold('vue.config.js')}, ` +
+          `in this case, "baseUrl" will be ignored in favor of "publicPath".`
+        )
+      } else {
+        warn(
+          `"baseUrl" option in ${chalk.bold('vue.config.js')} ` +
+          `is deprecated now, please use "publicPath" instead.`
+        )
+        resolved.publicPath = resolved.baseUrl
+      }
+    }
+
+    // normalize some options
+    ensureSlash(resolved, 'publicPath')
+    if (typeof resolved.publicPath === 'string') {
+      resolved.publicPath = resolved.publicPath.replace(/^\.\//, '')
+    }
+    // for compatibility concern, in case some plugins still rely on `baseUrl` option
+    resolved.baseUrl = resolved.publicPath
     removeSlash(resolved, 'outputDir')
+
+    // deprecation warning
+    // TODO remove in final release
+    if (resolved.css && resolved.css.localIdentName) {
+      warn(
+        `css.localIdentName has been deprecated. ` +
+        `All css-loader options (except "modules") are now supported via css.loaderOptions.css.`
+      )
+    }
 
     // validate options
     validate(resolved, msg => {
       error(
-        `Invalid options in ${chalk.bold(resovledFrom)}: ${msg}`
+        `Invalid options in ${chalk.bold(resolvedFrom)}: ${msg}`
       )
     })
 
@@ -274,6 +380,20 @@ function ensureSlash (config, key) {
 
 function removeSlash (config, key) {
   if (typeof config[key] === 'string') {
-    config[key] = config[key].replace(/^\/|\/$/g, '')
+    config[key] = config[key].replace(/\/$/g, '')
   }
+}
+
+function cloneRuleNames (to, from) {
+  if (!to || !from) {
+    return
+  }
+  from.forEach((r, i) => {
+    if (to[i]) {
+      Object.defineProperty(to[i], '__ruleNames', {
+        value: r.__ruleNames
+      })
+      cloneRuleNames(to[i].oneOf, r.oneOf)
+    }
+  })
 }

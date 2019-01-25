@@ -14,7 +14,7 @@ test('polyfill detection', () => {
       targets: { node: 'current' }
     }]]
   })
-  // default includes
+  // default i  ncludes
   expect(code).not.toMatch(`import "core-js/modules/es6.promise"`)
   // usage-based detection
   expect(code).not.toMatch(`import "core-js/modules/es6.map"`)
@@ -29,8 +29,42 @@ test('polyfill detection', () => {
   }))
   // default includes
   expect(code).toMatch(`import "core-js/modules/es6.promise"`)
+  // promise polyfill alone doesn't work in IE, needs this as well. fix: #1642
+  expect(code).toMatch(`import "core-js/modules/es6.array.iterator"`)
   // usage-based detection
-  expect(code).toMatch(`import "core-js/modules/es6.map"`)
+  expect(code).toMatch(/import _Map from ".*runtime-corejs2\/core-js\/map"/)
+})
+
+test('modern mode always skips polyfills', () => {
+  process.env.VUE_CLI_MODERN_BUILD = true
+  let { code } = babel.transformSync(`
+    const a = new Map()
+  `.trim(), {
+    babelrc: false,
+    presets: [[preset, {
+      targets: { ie: 9 },
+      useBuiltIns: 'usage'
+    }]]
+  })
+  // default includes
+  expect(code).not.toMatch(`import "core-js/modules/es6.promise"`)
+  // usage-based detection
+  expect(code).not.toMatch(/import _Map from ".*runtime-corejs2\/core-js\/map"/)
+
+  ;({ code } = babel.transformSync(`
+    const a = new Map()
+  `.trim(), {
+    babelrc: false,
+    presets: [[preset, {
+      targets: { ie: 9 },
+      useBuiltIns: 'entry'
+    }]]
+  }))
+  // default includes
+  expect(code).not.toMatch(`import "core-js/modules/es6.promise"`)
+  // usage-based detection
+  expect(code).not.toMatch(/import _Map from ".*runtime-corejs2\/core-js\/map"/)
+  delete process.env.VUE_CLI_MODERN_BUILD
 })
 
 test('object spread', () => {
@@ -58,7 +92,7 @@ test('async/await', () => {
   // should use regenerator runtime
   expect(code).toMatch(`import "regenerator-runtime/runtime"`)
   // should use required helper instead of inline
-  expect(code).toMatch(/@babel.*runtime\/helpers\/.*asyncToGenerator/)
+  expect(code).toMatch(/import _asyncToGenerator from ".*runtime-corejs2\/helpers\/esm\/asyncToGenerator\"/)
 })
 
 test('jsx', () => {
@@ -70,5 +104,24 @@ test('jsx', () => {
     }
   `.trim(), defaultOptions)
   expect(code).toMatch(`var h = arguments[0]`)
+  expect(code).toMatch(`return h("div", ["bar"])`)
+})
+
+test('jsx options', () => {
+  const { code } = babel.transformSync(`
+    export default {
+      render () {
+        return <div>bar</div>
+      }
+    }
+  `.trim(), {
+    babelrc: false,
+    presets: [[preset, {
+      jsx: {
+        injectH: false
+      }
+    }]]
+  })
+  expect(code).not.toMatch(`var h = arguments[0]`)
   expect(code).toMatch(`return h("div", ["bar"])`)
 })
